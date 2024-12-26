@@ -1,10 +1,10 @@
 import 'package:shelf/shelf.dart' as shelf;
-import 'package:shelf/shelf_io.dart' as io;
 import 'package:shelf_router/shelf_router.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
 import 'package:path/path.dart' as path;
+import 'utils.dart';
 
 class VideoServer {
   static const int BUFFER_SIZE = 81920;
@@ -53,7 +53,7 @@ class VideoServer {
         // Get video info first
         final videoInfo = await _getVideoInfo(normalizedUrl);
         final title =
-            _sanitizeFilename(videoInfo['title'] as String? ?? 'video');
+            sanitizeFilename(videoInfo['title'] as String? ?? 'video');
 
         // Download video and audio separately
         await _downloadVideoComponent(normalizedUrl, videoPath, quality, true);
@@ -95,23 +95,6 @@ class VideoServer {
     }
   }
 
-  String normalizeYouTubeUrl(String url) {
-    // Regular expression to match YouTube video IDs
-    final RegExp youtubeIdRegex = RegExp(
-      r'^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
-      caseSensitive: false,
-    );
-
-    final match = youtubeIdRegex.firstMatch(url);
-    if (match != null && match.groupCount >= 1) {
-      final videoId = match.group(1);
-      return 'https://www.youtube.com/watch?v=$videoId';
-    }
-
-    // If no match is found, return the original URL
-    return url;
-  }
-
   Future<shelf.Response> _handleAudioDownload(shelf.Request request) async {
     try {
       final url = request.url.queryParameters['url'];
@@ -132,7 +115,7 @@ class VideoServer {
       try {
         final videoInfo = await _getVideoInfo(normalizedUrl);
         final title =
-            _sanitizeFilename(videoInfo['title'] as String? ?? 'audio');
+            sanitizeFilename(videoInfo['title'] as String? ?? 'audio');
 
         await _downloadAudio(normalizedUrl, outputPath, format);
 
@@ -149,7 +132,7 @@ class VideoServer {
               ),
             );
 
-        final mimeType = _getAudioMimeType(format);
+        final mimeType = getAudioMimeType(format);
         return shelf.Response.ok(
           stream,
           headers: {
@@ -271,42 +254,5 @@ class VideoServer {
       json.encode(formats),
       headers: {'Content-Type': 'application/json'},
     );
-  }
-
-  String _sanitizeFilename(String filename) {
-    return filename.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-  }
-
-  String _getAudioMimeType(String format) {
-    switch (format) {
-      case 'mp3':
-        return 'audio/mpeg';
-      case 'm4a':
-        return 'audio/mp4';
-      case 'opus':
-        return 'audio/opus';
-      case 'wav':
-        return 'audio/wav';
-      default:
-        return 'application/octet-stream';
-    }
-  }
-}
-
-void main() async {
-  final server = VideoServer();
-
-  final handler = const shelf.Pipeline()
-      .addMiddleware(shelf.logRequests())
-      .addHandler(server.router);
-
-  final port = int.parse(Platform.environment['PORT'] ?? '8080');
-  final ip = InternetAddress.anyIPv4;
-
-  try {
-    final serverInstance = await io.serve(handler, ip, port);
-    print('Server running on port ${serverInstance.port}');
-  } catch (e) {
-    print('Server failed to start: $e');
   }
 }

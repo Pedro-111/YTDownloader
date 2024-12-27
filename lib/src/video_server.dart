@@ -14,21 +14,32 @@ class VideoServer {
   VideoServer()
       : ytDlpPath = path.join(Directory.current.path, 'bin', 'Tools', 'yt-dlp.exe'),
         ffmpegPath = path.join(Directory.current.path, 'bin', 'Tools', 'ffmpeg.exe');
-
+        
   Router get router {
-    final router = Router();
-
-    // Video download endpoint with quality selection
-    router.get('/download', _handleVideoDownload);
-
-    // Audio download endpoint
-    router.get('/audio', _handleAudioDownload);
-
-    // Get available formats
-    router.get('/formats', _handleGetFormats);
-
-    return router;
+      final router = Router();
+      router.get('/download', _handleVideoDownload);
+      router.get('/audio', _handleAudioDownload);
+      router.get('/formats', _handleGetFormats);
+      return router;
+    }
+  Stream<List<int>> _createBufferedStream(File file) async* {
+    final reader = file.openRead();
+    List<int> buffer = [];
+    
+    await for (var chunk in reader) {
+      buffer.addAll(chunk);
+      
+      while (buffer.length >= BUFFER_SIZE) {
+        yield buffer.sublist(0, BUFFER_SIZE);
+        buffer = buffer.sublist(BUFFER_SIZE);
+      }
+    }
+    
+    if (buffer.isNotEmpty) {
+      yield buffer;
+    }
   }
+
 
   Future<shelf.Response> _handleVideoDownload(shelf.Request request) async {
     try {
@@ -41,47 +52,39 @@ class VideoServer {
         );
       }
 
-      // Normalize the YouTube URL
       final normalizedUrl = normalizeYouTubeUrl(url);
-
       final tempDir = await Directory.systemTemp.createTemp('video_download_');
       final videoPath = path.join(tempDir.path, 'video.mp4');
       final audioPath = path.join(tempDir.path, 'audio.m4a');
       final outputPath = path.join(tempDir.path, 'output.mp4');
 
       try {
-        // Get video info first
         final videoInfo = await _getVideoInfo(normalizedUrl);
-        final title =
-            sanitizeFilename(videoInfo['title'] as String? ?? 'video');
+        final title = videoInfo['title'] as String? ?? 'video';
+        final filename = '$title.mp4';
+        
+        // Create Content-Disposition header with both ASCII and UTF-8 filename
+        final contentDisposition = createContentDisposition(filename);
 
-        // Download video and audio separately
         await _downloadVideoComponent(normalizedUrl, videoPath, quality, true);
         await _downloadVideoComponent(normalizedUrl, audioPath, 'bestaudio', false);
-
-        // Combine video and audio
         await _combineVideoAudio(videoPath, audioPath, outputPath);
 
-        // Stream the file back to client
         final file = File(outputPath);
-        final stream = file.openRead().transform(
-              StreamTransformer.fromHandlers(
-                handleData: (data, sink) {
-                  sink.add(data);
-                },
-                handleDone: (sink) async {
-                  sink.close();
-                  // Cleanup temp files
-                  await tempDir.delete(recursive: true);
-                },
-              ),
-            );
+        final bufferedStream = _createBufferedStream(file).transform(
+          StreamTransformer.fromHandlers(
+            handleDone: (sink) async {
+              sink.close();
+              await tempDir.delete(recursive: true);
+            },
+          ),
+        );
 
         return shelf.Response.ok(
-          stream,
+          bufferedStream,
           headers: {
             'Content-Type': 'video/mp4',
-            'Content-Disposition': 'attachment; filename="$title.mp4"',
+            'Content-Disposition': contentDisposition,
           },
         );
       } catch (e) {
@@ -106,38 +109,36 @@ class VideoServer {
         );
       }
 
-      // Normalize the YouTube URL
       final normalizedUrl = normalizeYouTubeUrl(url);
-
       final tempDir = await Directory.systemTemp.createTemp('audio_download_');
       final outputPath = path.join(tempDir.path, 'audio.$format');
 
       try {
         final videoInfo = await _getVideoInfo(normalizedUrl);
-        final title =
-            sanitizeFilename(videoInfo['title'] as String? ?? 'audio');
+        final title = videoInfo['title'] as String? ?? 'audio';
+        final filename = '$title.$format';
+        
+        // Create Content-Disposition header with both ASCII and UTF-8 filename
+        final contentDisposition = createContentDisposition(filename);
 
         await _downloadAudio(normalizedUrl, outputPath, format);
 
         final file = File(outputPath);
-        final stream = file.openRead().transform(
-              StreamTransformer.fromHandlers(
-                handleData: (data, sink) {
-                  sink.add(data);
-                },
-                handleDone: (sink) async {
-                  sink.close();
-                  await tempDir.delete(recursive: true);
-                },
-              ),
-            );
+        final bufferedStream = _createBufferedStream(file).transform(
+          StreamTransformer.fromHandlers(
+            handleDone: (sink) async {
+              sink.close();
+              await tempDir.delete(recursive: true);
+            },
+          ),
+        );
 
         final mimeType = getAudioMimeType(format);
         return shelf.Response.ok(
-          stream,
+          bufferedStream,
           headers: {
             'Content-Type': mimeType,
-            'Content-Disposition': 'attachment; filename="$title.$format"',
+            'Content-Disposition': contentDisposition,
           },
         );
       } catch (e) {
@@ -150,6 +151,7 @@ class VideoServer {
       );
     }
   }
+
 
   Future<Map<String, dynamic>> _getVideoInfo(String url) async {
     print('yt-dlp path: $ytDlpPath'); // Debugging statement

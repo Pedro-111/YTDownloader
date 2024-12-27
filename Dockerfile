@@ -1,21 +1,47 @@
-# Use latest stable channel SDK.
 FROM dart:stable AS build
 
-# Resolve app dependencies.
+# Install yt-dlp and ffmpeg
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    && pip3 install yt-dlp \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Resolve app dependencies
 WORKDIR /app
 COPY pubspec.* ./
 RUN dart pub get
 
-# Copy app source code (except anything in .dockerignore) and AOT compile app.
+# Copy app source code and create Tools directory
 COPY . .
-RUN dart compile exe bin/server.dart -o bin/server
+RUN mkdir -p bin/Tools \
+    && which yt-dlp > bin/Tools/yt-dlp.exe \
+    && which ffmpeg > bin/Tools/ffmpeg.exe \
+    && chmod +x bin/Tools/yt-dlp.exe \
+    && chmod +x bin/Tools/ffmpeg.exe
 
-# Build minimal serving image from AOT-compiled `/server`
-# and the pre-built AOT-runtime in the `/runtime/` directory of the base image.
-FROM scratch
-COPY --from=build /runtime/ /
+# AOT compile app
+RUN dart compile exe bin/main.dart -o bin/server
+
+# Build minimal serving image
+FROM debian:stable-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    && pip3 install yt-dlp \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy compiled server and tools
+WORKDIR /app
 COPY --from=build /app/bin/server /app/bin/
+COPY --from=build /app/bin/Tools /app/bin/Tools
 
-# Start server.
+# Start server
 EXPOSE 8080
-CMD ["/app/bin/server"]
+ENTRYPOINT ["/app/bin/server"]

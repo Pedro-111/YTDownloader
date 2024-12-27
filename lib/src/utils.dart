@@ -1,4 +1,6 @@
 
+import 'dart:convert';
+
 String normalizeYouTubeUrl(String url) {
   // Regular expression to match YouTube video IDs
   final RegExp youtubeIdRegex = RegExp(
@@ -23,6 +25,27 @@ String sanitizeFilename(String filename) {
   );
   return filename.replaceAll(emojiRegex, '_');
 }
+String encodeFilename(String filename) {
+    // Remove invalid filesystem characters but keep Unicode characters
+    final sanitized = filename.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    
+    // UTF-8 encode the filename
+    final bytes = utf8.encode(sanitized);
+    final encoded = bytes.map((byte) => '%${byte.toRadixString(16).padLeft(2, '0').toUpperCase()}').join('');
+    
+    return "filename*=UTF-8''$encoded";
+  }
+  String createContentDisposition(String filename) {
+    // Create ASCII-only filename by removing non-ASCII characters
+    final asciiFilename = filename.replaceAll(RegExp(r'[^\x20-\x7E]'), '_');
+    
+    // Create UTF-8 encoded filename
+    final bytes = utf8.encode(filename);
+    final utf8Filename = bytes.map((byte) => '%${byte.toRadixString(16).padLeft(2, '0').toUpperCase()}').join('');
+    
+    // Return Content-Disposition with both ASCII and UTF-8 filenames
+    return 'attachment; filename="$asciiFilename"; filename*=UTF-8\'\'$utf8Filename';
+  }
 
 String getAudioMimeType(String format) {
   switch (format) {
